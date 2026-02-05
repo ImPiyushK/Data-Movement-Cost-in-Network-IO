@@ -92,6 +92,7 @@ compile_all() {
     log_info "Compiling all implementations..."
     make clean
     make all
+    log_info "Compilation complete"
 }
 
 ############################
@@ -111,7 +112,7 @@ run_experiment() {
 
     local server_log="/tmp/server_$$.log"
     local client_log="/tmp/client_$$.log"
-    local perf_log="/tmp/perf_$$.csv"
+    local perf_log="/tmp/perf_$$.txt"
 
     # Start server
     ip netns exec ns_server "$server_bin" -p "$port" -s "$msg_size" \
@@ -125,13 +126,13 @@ run_experiment() {
         return 1
     }
 
-    # Run client with perf (CSV-safe)
-    ip netns exec ns_client perf stat -x, \
-        -e cycles,cache-misses,L1-dcache-load-misses,context-switches \
-        -o "$perf_log" \
-        timeout $((DURATION + 5)) \
-        "$client_bin" -i 10.0.0.1 -p "$port" -s "$msg_size" -t "$threads" -d "$DURATION" \
-        >"$client_log" 2>&1 || true
+    # Run client with perf stat - use standard output format (not CSV)
+    # Run perf inside the namespace but with -a for system-wide or specific events
+    ip netns exec ns_client bash -c "
+        perf stat -e cycles,cache-misses,L1-dcache-load-misses,LLC-load-misses,context-switches \
+        timeout $((DURATION + 5)) '$client_bin' -i 10.0.0.1 -p '$port' -s '$msg_size' -t '$threads' -d '$DURATION' \
+        2>'$perf_log' | tee '$client_log'
+    " 2>&1 || true
 
     # Stop server
     kill -9 "$SERVER_PID" 2>/dev/null || true
@@ -141,39 +142,46 @@ run_experiment() {
     ############################
     # Parse client metrics
     ############################
-    throughput=$(grep THROUGHPUT_GBPS "$client_log" | cut -d',' -f2 || echo 0)
-    latency=$(grep LATENCY_US "$client_log" | cut -d',' -f2 || echo 0)
-    total_bytes=$(grep TOTAL_BYTES "$client_log" | cut -d',' -f2 || echo 0)
+    local throughput=$(grep THROUGHPUT_GBPS "$client_log" 2>/dev/null | cut -d',' -f2 | tr -d ' ' || echo "0")
+    local latency=$(grep LATENCY_US "$client_log" 2>/dev/null | cut -d',' -f2 | tr -d ' ' || echo "0")
+    local total_bytes=$(grep TOTAL_BYTES "$client_log" 2>/dev/null | cut -d',' -f2 | tr -d ' ' || echo "0")
 
     ############################
-    # Parse perf CSV (safe)
+    # Parse perf output (standard format)
     ############################
-    cycles=$(awk -F, '$3=="cycles"{print $1}' "$perf_log")
-    cache_misses=$(awk -F, '$3=="cache-misses"{print $1}' "$perf_log")
-    l1_misses=$(awk -F, '$3=="L1-dcache-load-misses"{print $1}' "$perf_log")
-    ctx_switches=$(awk -F, '$3=="context-switches"{print $1}' "$perf_log")
+    # perf stat output looks like: "    1,234,567      cycles"
+    local cycles=$(grep -E "^\s*[0-9,]+\s+cycles" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
+    local cache_misses=$(grep -E "cache-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
+    local l1_misses=$(grep -E "L1-dcache-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
+    local llc_misses=$(grep -E "LLC-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
+    local ctx_switches=$(grep -E "context-switches" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
 
-    cycles=${cycles:-0}
-    cache_misses=${cache_misses:-0}
-    l1_misses=${l1_misses:-0}
-    ctx_switches=${ctx_switches:-0}
+    # Handle <not supported> or <not counted> cases
+    [[ "$cycles" =~ ^[0-9]+$ ]] || cycles=0
+    [[ "$cache_misses" =~ ^[0-9]+$ ]] || cache_misses=0
+    [[ "$l1_misses" =~ ^[0-9]+$ ]] || l1_misses=0
+    [[ "$llc_misses" =~ ^[0-9]+$ ]] || llc_misses=0
+    [[ "$ctx_switches" =~ ^[0-9]+$ ]] || ctx_switches=0
 
     ############################
     # Derived metric
     ############################
-    if [[ "$total_bytes" -gt 0 ]]; then
-        cycles_per_byte=$(echo "scale=4; $cycles / $total_bytes" | bc)
-    else
-        cycles_per_byte=0
+    local cycles_per_byte=0
+    if [[ "$total_bytes" =~ ^[0-9]+$ ]] && [[ "$total_bytes" -gt 0 ]] && [[ "$cycles" -gt 0 ]]; then
+        cycles_per_byte=$(echo "scale=4; $cycles / $total_bytes" | bc 2>/dev/null || echo "0")
     fi
 
     ############################
-    # Write ONE clean CSV row
+    # Write CSV row
     ############################
-    echo "$impl_name,$msg_size,$threads,$throughput,$latency,$total_bytes,$cycles,$cache_misses,$l1_misses,$ctx_switches,$cycles_per_byte" \
+    echo "$impl_name,$msg_size,$threads,$throughput,$latency,$total_bytes,$cycles,$cache_misses,$l1_misses,$llc_misses,$ctx_switches,$cycles_per_byte" \
         >> "$OUTPUT_CSV"
 
-    log_info "  -> Throughput=${throughput}Gbps Latency=${latency}us"
+    log_info "  -> Throughput=${throughput}Gbps Latency=${latency}us Cycles=${cycles}"
+
+    # Show perf output for debugging
+    log_info "  -> Perf output:"
+    cat "$perf_log" 2>/dev/null | head -15 || true
 
     rm -f "$server_log" "$client_log" "$perf_log"
     sleep 1
@@ -185,10 +193,19 @@ run_experiment() {
 main() {
     [[ $EUID -eq 0 ]] || { log_error "Run with sudo"; exit 1; }
 
+    # Check perf availability and permissions
+    if ! command -v perf &>/dev/null; then
+        log_error "perf is not installed. Install with: apt install linux-tools-common linux-tools-generic linux-tools-\$(uname -r)"
+        exit 1
+    fi
+
+    # Set perf paranoid to allow perf stat
+    echo 0 > /proc/sys/kernel/perf_event_paranoid 2>/dev/null || log_warn "Could not set perf_event_paranoid"
+
     compile_all
     setup_namespaces
 
-    echo "impl_type,msg_size,threads,throughput_gbps,latency_us,total_bytes,cpu_cycles,cache_misses,l1_misses,context_switches,cycles_per_byte" \
+    echo "impl_type,msg_size,threads,throughput_gbps,latency_us,total_bytes,cpu_cycles,cache_misses,l1_misses,llc_misses,context_switches,cycles_per_byte" \
         > "$OUTPUT_CSV"
 
     local port=$BASE_PORT
@@ -199,7 +216,7 @@ main() {
         for msg in "${MESSAGE_SIZES[@]}"; do
             for th in "${THREAD_COUNTS[@]}"; do
                 count=$((count + 1))
-                log_info "Experiment $count/$total"
+                log_info "======== Experiment $count/$total ========"
                 run_experiment "${IMPL_TYPES[$i]}" "${IMPL_NAMES[$i]}" "$msg" "$th" "$port" || true
                 port=$((port + 1))
             done
@@ -208,6 +225,9 @@ main() {
 
     log_info "Experiments complete"
     log_info "Results saved to $OUTPUT_CSV"
+    echo ""
+    echo "=== Final Results ==="
+    cat "$OUTPUT_CSV"
 }
 
 main
