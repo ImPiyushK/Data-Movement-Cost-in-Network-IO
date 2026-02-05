@@ -149,14 +149,13 @@ run_experiment() {
     ############################
     # Parse perf output (standard format)
     ############################
-    # perf stat output looks like: "    1,234,567      cycles"
-    local cycles=$(grep -E "^\s*[0-9,]+\s+cycles" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
-    local cache_misses=$(grep -E "cache-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
-    local l1_misses=$(grep -E "L1-dcache-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
-    local llc_misses=$(grep -E "LLC-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
-    local ctx_switches=$(grep -E "context-switches" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); print $1}' || echo "0")
+    local cycles=$(grep "cycles" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
+    local cache_misses=$(grep "cache-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
+    local l1_misses=$(grep "L1-dcache-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
+    local llc_misses=$(grep "LLC-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
+    local ctx_switches=$(grep "context-switches" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
 
-    # Handle <not supported> or <not counted> cases
+    # Handle cases where grep returns nothing (awk prints 0 due to our logic, but ensuring safety)
     [[ "$cycles" =~ ^[0-9]+$ ]] || cycles=0
     [[ "$cache_misses" =~ ^[0-9]+$ ]] || cache_misses=0
     [[ "$l1_misses" =~ ^[0-9]+$ ]] || l1_misses=0
