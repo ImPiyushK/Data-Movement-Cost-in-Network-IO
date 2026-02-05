@@ -1,6 +1,7 @@
 #!/bin/bash
-# MT25076 - Part C: Automated Experiment Script (FIXED)
+# MT25076 - Part C: Automated Experiment Script
 # Roll Number: MT25076
+# Profiling is done on the SERVER side
 
 set -euo pipefail
 
@@ -34,6 +35,7 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 SERVER_PID=""
+PERF_PID=""
 
 ############################
 # Cleanup
@@ -41,13 +43,23 @@ SERVER_PID=""
 cleanup() {
     log_info "Cleaning up..."
 
+    # Kill perf process if it exists
+    if [[ -n "${PERF_PID:-}" ]] && kill -0 "$PERF_PID" 2>/dev/null; then
+        kill -SIGINT "$PERF_PID" 2>/dev/null || true
+        wait "$PERF_PID" 2>/dev/null || true
+    fi
+
+    # Kill server process if it exists
     if [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
-        kill -9 "$SERVER_PID" 2>/dev/null || true
+        kill -SIGTERM "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
 
+    # Kill any remaining processes
     pkill -9 -f MT25076_Part_A 2>/dev/null || true
+    pkill -9 -f "perf stat" 2>/dev/null || true
 
+    # Remove namespaces
     ip netns del ns_server 2>/dev/null || true
     ip netns del ns_client 2>/dev/null || true
     ip link del veth_server 2>/dev/null || true
@@ -114,30 +126,82 @@ run_experiment() {
     local client_log="/tmp/client_$$.log"
     local perf_log="/tmp/perf_$$.txt"
 
-    # Start server
+    # Ensure no previous processes are running
+    pkill -9 -f "MT25076_Part_A.*Server" 2>/dev/null || true
+    pkill -9 -f "perf stat" 2>/dev/null || true
+    sleep 0.5
+
+    # Start server WITHOUT perf (just plain server)
     ip netns exec ns_server "$server_bin" -p "$port" -s "$msg_size" \
         >"$server_log" 2>&1 &
     SERVER_PID=$!
 
-    sleep 2
+    sleep 1
+    
+    # Verify server is running
     kill -0 "$SERVER_PID" 2>/dev/null || {
-        log_error "Server failed"
+        log_error "Server failed to start"
         cat "$server_log"
         return 1
     }
 
-    # Run client with perf stat - use standard output format (not CSV)
-    # Run perf inside the namespace but with -a for system-wide or specific events
-    ip netns exec ns_client bash -c "
-        perf stat -e cycles,cache-misses,L1-dcache-load-misses,LLC-load-misses,context-switches \
-        timeout $((DURATION + 5)) '$client_bin' -i 10.0.0.1 -p '$port' -s '$msg_size' -t '$threads' -d '$DURATION' \
-        2>'$perf_log' | tee '$client_log'
-    " 2>&1 || true
+    log_info "Server started with PID $SERVER_PID"
+
+    # Start perf to profile the SERVER process
+    # We use -p to attach to the running server process
+    (perf stat -e cycles,cache-misses,L1-dcache-load-misses,LLC-load-misses,context-switches \
+        -p "$SERVER_PID" 2>&1) > "$perf_log" 2>&1 &
+    PERF_PID=$!
+
+    sleep 1
+
+    log_info "Perf monitoring started (PID: $PERF_PID) on server (PID: $SERVER_PID)"
+
+    # Run client (drives the test duration)
+    ip netns exec ns_client \
+        "$client_bin" -i 10.0.0.1 -p "$port" -s "$msg_size" -t "$threads" -d "$DURATION" \
+        > "$client_log" 2>&1 || true
+
+    log_info "Client completed"
+
+    # Give a brief moment for any pending data
+    sleep 2
+
+    # Stop perf profiling first (send SIGINT to allow it to print stats)
+    log_info "Stopping perf profiling..."
+    if [[ -n "${PERF_PID:-}" ]] && kill -0 "$PERF_PID" 2>/dev/null; then
+        kill -SIGINT "$PERF_PID" 2>/dev/null || true
+        # Wait with timeout
+        for i in {1..5}; do
+            if ! kill -0 "$PERF_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        # Force kill if still running
+        kill -9 "$PERF_PID" 2>/dev/null || true
+        wait "$PERF_PID" 2>/dev/null || true
+        PERF_PID=""
+    fi
 
     # Stop server
-    kill -9 "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-    SERVER_PID=""
+    log_info "Stopping server..."
+    if [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill -SIGTERM "$SERVER_PID" 2>/dev/null || true
+        # Wait with timeout
+        for i in {1..5}; do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        # Force kill if still running
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+        SERVER_PID=""
+    fi
+
+    sleep 1
 
     ############################
     # Parse client metrics
@@ -147,7 +211,7 @@ run_experiment() {
     local total_bytes=$(grep TOTAL_BYTES "$client_log" 2>/dev/null | cut -d',' -f2 | tr -d ' ' || echo "0")
 
     ############################
-    # Parse perf output (standard format)
+    # Parse perf output from server profiling
     ############################
     local cycles=$(grep "cycles" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
     local cache_misses=$(grep "cache-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
@@ -155,7 +219,7 @@ run_experiment() {
     local llc_misses=$(grep "LLC-load-misses" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
     local ctx_switches=$(grep "context-switches" "$perf_log" 2>/dev/null | awk '{gsub(/,/,"",$1); sum+=$1} END {printf "%.0f", (sum == "" ? 0 : sum)}')
 
-    # Handle cases where grep returns nothing (awk prints 0 due to our logic, but ensuring safety)
+    # Ensure numeric values
     [[ "$cycles" =~ ^[0-9]+$ ]] || cycles=0
     [[ "$cache_misses" =~ ^[0-9]+$ ]] || cache_misses=0
     [[ "$l1_misses" =~ ^[0-9]+$ ]] || l1_misses=0
@@ -179,7 +243,7 @@ run_experiment() {
     log_info "  -> Throughput=${throughput}Gbps Latency=${latency}us Cycles=${cycles}"
 
     # Show perf output for debugging
-    log_info "  -> Perf output:"
+    log_info "  -> Server Perf output:"
     cat "$perf_log" 2>/dev/null | head -15 || true
 
     rm -f "$server_log" "$client_log" "$perf_log"
@@ -192,14 +256,14 @@ run_experiment() {
 main() {
     [[ $EUID -eq 0 ]] || { log_error "Run with sudo"; exit 1; }
 
-    # Check perf availability and permissions
+    # Check perf availability
     if ! command -v perf &>/dev/null; then
         log_error "perf is not installed. Install with: apt install linux-tools-common linux-tools-generic linux-tools-\$(uname -r)"
         exit 1
     fi
 
     # Set perf paranoid to allow perf stat
-    echo 0 > /proc/sys/kernel/perf_event_paranoid 2>/dev/null || log_warn "Could not set perf_event_paranoid"
+    echo -1 > /proc/sys/kernel/perf_event_paranoid 2>/dev/null || log_warn "Could not set perf_event_paranoid"
 
     compile_all
     setup_namespaces
@@ -211,12 +275,15 @@ main() {
     local total=$(( ${#IMPL_TYPES[@]} * ${#MESSAGE_SIZES[@]} * ${#THREAD_COUNTS[@]} ))
     local count=0
 
-    for i in "${!IMPL_TYPES[@]}"; do
+    for idx in "${!IMPL_TYPES[@]}"; do
+        local impl_type="${IMPL_TYPES[$idx]}"
+        local impl_name="${IMPL_NAMES[$idx]}"
+        
         for msg in "${MESSAGE_SIZES[@]}"; do
             for th in "${THREAD_COUNTS[@]}"; do
                 count=$((count + 1))
                 log_info "======== Experiment $count/$total ========"
-                run_experiment "${IMPL_TYPES[$i]}" "${IMPL_NAMES[$i]}" "$msg" "$th" "$port" || true
+                run_experiment "$impl_type" "$impl_name" "$msg" "$th" "$port" || true
                 port=$((port + 1))
             done
         done
