@@ -1,3 +1,17 @@
+/*
+ * ----------------------------------------------------------------------------
+ * AI USAGE DECLARATION
+ * ----------------------------------------------------------------------------
+ *
+ * Components utilizing AI:
+ * - Implementation of Two-Copy Server logic.
+ * - Multi-threaded client handling.
+ *
+ *
+ * Verification:
+ * The generated code was manually reviewed, compiled, and tested.
+ * ----------------------------------------------------------------------------
+ */
 /* MT25076 - Part A1: Two-Copy Server Implementation
  * Uses send()/recv() socket primitives - baseline two-copy mechanism
  * 

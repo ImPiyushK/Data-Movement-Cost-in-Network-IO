@@ -1,3 +1,16 @@
+/*
+ * ----------------------------------------------------------------------------
+ * AI USAGE DECLARATION
+ * ----------------------------------------------------------------------------
+ *
+ * Components utilizing AI:
+ * - Implementation of Zero-Copy Server logic.
+ * - Handling zero-copy sendmsg and completion polling.
+ *
+ * Verification:
+ * The generated code was manually reviewed, compiled, and tested.
+ * ----------------------------------------------------------------------------
+ */
 /* MT25076 - Part A3: Zero-Copy Server Implementation
  * Uses sendmsg() with MSG_ZEROCOPY flag
  * 
