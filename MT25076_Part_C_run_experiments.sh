@@ -1,4 +1,15 @@
 #!/bin/bash
+# ----------------------------------------------------------------------------
+# AI USAGE DECLARATION
+# ----------------------------------------------------------------------------
+#
+# Components utilizing AI:
+# - Experiment automation logic.
+# - Namespace and cleanup handling.
+#
+# Verification:
+# The generated code was manually reviewed and tested.
+# ----------------------------------------------------------------------------
 # MT25076 - Part C: Automated Experiment Script
 # Roll Number: MT25076
 # Profiling is done on the PROCESS THAT IS SENDING (or as requested, bidirectional)
