@@ -1,26 +1,51 @@
-# MT25076 – GRS PA02: Analysis of Network I/O Primitives
+# MT25076 – PA02: Experimental Analysis of Network I/O Data Movement
 
-> **Roll Number:** MT25076\
-> **Course:** Graduate Systems (CSE638)\
-> **Assignment:** PA02 – Analysis of Network I/O primitives using `perf`
-
----
-
-## 1. Overview
-
-This assignment experimentally studies the **cost of data movement in network I/O** by implementing and comparing three TCP-based client–server communication mechanisms:
-
-1. **Two-Copy Socket Communication (Baseline)** – using `send()` / `recv()`
-2. **One-Copy Optimized Communication** – using `sendmsg()` with `iovec`
-3. **Zero-Copy Communication** – using `sendmsg()` with `MSG_ZEROCOPY`
-
-All implementations are **multithreaded**, parameterized at runtime, and profiled using the Linux `perf` tool to analyze CPU cycles, cache behavior, and context switches.
+> **Roll Number:** MT25076  
+> **Course:** Graduate Systems  
+> **Assignment:** PA02 – Analysis of Network I/O Primitives  
 
 ---
 
-## 2. Directory & File Structure
+## 1. Objective
 
-All files follow the **mandatory naming convention** prescribed in the assignment.
+The objective of this assignment is to experimentally study the cost of data movement in network I/O by implementing and comparing:
+
+1. Standard two-copy socket communication  
+2. One-copy optimized socket communication  
+3. Zero-copy socket communication  
+
+The study focuses on micro-architectural effects such as CPU cycles, cache behavior, context switches, throughput, and latency. All experiments are conducted using multithreaded TCP client–server programs in C and profiled using Linux `perf`.
+
+---
+
+## 2. Implementation Overview
+
+Three versions of a TCP-based client–server application are implemented.
+
+### Common Properties (All Versions)
+
+**Server**
+- Accepts multiple concurrent clients  
+- Uses one thread per client  
+- Transfers fixed-size messages repeatedly  
+- Sends a message consisting of 8 dynamically allocated string fields  
+- Each field is heap-allocated using `malloc()`  
+
+**Client**
+- Connects to the server  
+- Receives data continuously for a fixed duration  
+- Controls experiment termination and throughput measurement  
+
+**Runtime Parameters**
+- Message size  
+- Number of threads  
+- Experiment duration  
+
+All parameters are configurable at runtime via command-line arguments.
+
+---
+
+## 3. Directory Structure
 
 ```
 GRS_PA02/
@@ -28,171 +53,126 @@ GRS_PA02/
 ├── Makefile
 ├── MT25076_Part_A_common.h
 │
-├── MT25076_Part_A1_Client.c
 ├── MT25076_Part_A1_Server.c
+├── MT25076_Part_A1_Client.c
 │
-├── MT25076_Part_A2_Client.c
 ├── MT25076_Part_A2_Server.c
+├── MT25076_Part_A2_Client.c
 │
-├── MT25076_Part_A3_Client.c
 ├── MT25076_Part_A3_Server.c
+├── MT25076_Part_A3_Client.c
 │
 ├── MT25076_Part_C_run_experiments.sh
 ├── MT25076_Part_D_plots.py
 │
-├── MT25076_Part_B_results_*.csv
+├── MT25076_Part_B_app_results.csv
+├── MT25076_Part_B_perf_server_sender.csv
+├── MT25076_Part_B_perf_client_sender.csv
+│
 ├── MT25076_Report.pdf
 └── README.md
 ```
 
-⚠️ **Note:** No binary files or plot images are included, as per assignment rules.
+---
+
+## 4. Part A – Socket Implementations
+
+### A1. Two-Copy Implementation (Baseline)
+
+- Uses `send()` / `recv()`  
+- The 8 message fields are serialized into a single contiguous buffer  
+- Copies involved:
+  1. User-space aggregation copy during serialization  
+  2. Kernel copy into the socket buffer  
+
+This version serves as the baseline for comparison.
 
 ---
 
-## 3. Part A – Socket Implementations
+### A2. One-Copy Implementation
 
-### A1. Two-Copy (Baseline)
+- Uses `sendmsg()` with `struct iovec`  
+- Sends the 8 heap-allocated fields directly using scatter–gather I/O  
+- Eliminates the user-space aggregation copy  
+- Kernel copy into socket buffer still exists  
 
-- Uses `send()` / `recv()`
-- Data copied:
-  1. User buffer → kernel socket buffer
-  2. Kernel socket buffer → NIC (DMA)
-- Serves as baseline for comparison
-
-### A2. One-Copy Optimization
-
-- Uses `sendmsg()` with `struct iovec`
-- Eliminates **one user-space aggregation copy**
-- Kernel → NIC DMA copy still exists
+---
 
 ### A3. Zero-Copy Implementation
 
-- Uses `sendmsg()` with `MSG_ZEROCOPY`
-- Kernel directly references user pages
-- Data is sent via DMA without copying payload into kernel buffers
-- Completion handled via error queue
-
-Each server:
-
-- Accepts multiple concurrent clients
-- Uses **one thread per client**
-- Sends fixed-size messages composed of **8 heap-allocated string fields**
-
-Each client:
-
-- Sends data continuously for a fixed duration
-
-Message size and thread count are **runtime parameters**.
+- Uses `sendmsg()` with the `MSG_ZEROCOPY` flag  
+- Kernel pins user pages and transfers data via DMA  
+- No payload copy into kernel socket buffers  
+- Completion is handled via the socket error queue  
 
 ---
 
-## 4. Part B – Profiling & Measurement
+## 5. Part B – Profiling and Measurement
 
 ### Profiling Location
 
-📌 **All profiling is done on the SERVER side**.
-
-This is because:
-
-- The server performs the critical send-side operations (`send`, `sendmsg`, `MSG_ZEROCOPY`)
-- Data-copy, DMA mapping, page pinning, and cache effects occur on the sender
-- Profiling the client would not capture zero-copy benefits accurately
+All micro-architectural profiling is performed on the server side. The server performs all send-side operations, where data copies, page pinning, DMA mapping, and cache effects occur.
 
 ### Metrics Collected (using `perf stat`)
-
-- CPU cycles
-- L1 data cache misses
-- Last Level Cache (LLC) misses
-- Context switches
-- Instructions
+- CPU cycles  
+- Instructions  
+- L1 data cache misses  
+- Last Level Cache (LLC) misses  
+- Context switches  
 
 ### Experimental Coverage
-
-- **Message sizes:** 1K, 4K, 16K, 64K
-- **Thread counts:** 1, 2, 4, 8
-
----
-
-## 5. Part C – Automated Experiment Script
-
-`MT25076_Part_C_run_experiments.sh` performs the following automatically:
-
-1. Cleans and recompiles all implementations
-2. Iterates over message sizes and thread counts
-3. Runs server under `perf stat`
-4. Launches client workload
-5. Collects results in CSV format
-
-✔️ No manual intervention is required once the script starts.
+- Message sizes: 1K, 4K, 16K, 64K  
+- Thread counts: 1, 2, 4, 8  
 
 ---
 
-## 6. Part D – Plotting
+## 6. Part C – Automated Experiment Script
 
-Plots are generated using **matplotlib only**, as required.
+The script `MT25076_Part_C_run_experiments.sh`:
+1. Cleans and recompiles all implementations  
+2. Iterates over message sizes and thread counts  
+3. Runs the server under `perf stat`  
+4. Launches the client workload  
+5. Collects results in CSV format  
 
-- CSV files are **NOT** used as input
-- All values are **hardcoded** inside the Python script
-- Plots generated:
-  - Throughput vs Message Size
-  - Latency vs Thread Count
-  - Cache Misses vs Message Size
-  - CPU Cycles per Byte Transferred
-
-The script used:
-
-- `MT25076_Part_D_plots.py`
-
-Plots are included **only in the report**, not in the submission zip.
+The script runs fully automatically with no manual intervention.
 
 ---
 
-## 7. AI Usage Declaration
+## 7. Part D – Plotting
 
-AI tools (ChatGPT) were used **in a limited and transparent manner**, as permitted.
+Plots are generated using matplotlib only.
 
-### AI-Assisted Components
+**Important constraints**
+- CSV files are NOT used as input to the plotting script  
+- All plot values are hardcoded inside the Python file  
+- The plotting script can be executed directly during the demo  
 
-- Initial socket programming skeletons (client/server structure)
-- Guidance on correct usage of `sendmsg()` and `MSG_ZEROCOPY`
-- Help in structuring the experiment automation script
-- Assistance in interpreting `perf` metrics and expected trends
+**Plots generated**
+1. Throughput vs Message Size  
+2. Latency vs Thread Count  
+3. Cache Misses vs Message Size  
+4. CPU Cycles per Byte Transferred  
 
-### Non-AI Components
-
-- Final code logic and debugging
-- All experimental runs and data collection
-- Analysis, reasoning, and interpretation of results
-- Plot data selection and report writing
-
-### Example Prompts Used
-
-- "Explain the difference between two-copy, one-copy, and zero-copy socket communication in Linux"
-- "How does MSG\_ZEROCOPY work internally in the Linux kernel?"
-- "What perf counters best reflect cache behavior in network I/O?"
-
-All AI-generated guidance was **reviewed, understood, and manually adapted**.
+Script used: `MT25076_Part_D_plots.py`
 
 ---
 
-## 8. Build & Run Instructions
+## 8. Build and Run Instructions
 
 ### Build
-
-```bash
+```
 make clean
 make
 ```
 
 ### Run Experiments
-
-```bash
+```
 sudo bash MT25076_Part_C_run_experiments.sh
 ```
 
 ### Generate Plots
-
-```bash
+```
 python3 MT25076_Part_D_plots.py
 ```
 
@@ -200,15 +180,21 @@ python3 MT25076_Part_D_plots.py
 
 ## 9. System Configuration
 
-- OS: Linux
-- CPU: x86\_64 (details mentioned in report)
-- Network: Local host / veth-based testing
+- Operating System: Linux (Ubuntu 22.04)  
+- Architecture: x86_64  
+- Network Setup: Network namespaces using veth pairs  
+- CPU and RAM details are documented in the report  
 
 ---
 
-## 10. GitHub Repository
+## 10. AI Usage Declaration
 
-🔗 **Public Repository URL:** (Added in the report as required)
+AI tools (ChatGPT) were used in a limited and transparent manner for:
+- Conceptual clarification of two-copy, one-copy, and zero-copy mechanisms  
+- Guidance on `sendmsg()` and `MSG_ZEROCOPY` usage  
+- Assistance in interpreting `perf` counters  
+
+All coding, experimentation, analysis, and report writing were performed manually.
 
 ---
 
