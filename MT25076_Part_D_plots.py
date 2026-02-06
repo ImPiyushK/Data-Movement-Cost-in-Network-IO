@@ -1,3 +1,16 @@
+# ----------------------------------------------------------------------------
+# AI USAGE DECLARATION
+# ----------------------------------------------------------------------------
+# This file was generated with the assistance of AI tools.
+#
+# Components utilizing AI:
+# - Plotting logic using matplotlib.
+# - Data visualization structure.
+#
+#
+# Verification:
+# The generated code was manually reviewed and tested.
+# ----------------------------------------------------------------------------
 # MT25076 - Part D: Plotting Script
 # Roll Number: MT25076
 #
