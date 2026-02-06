@@ -1,3 +1,16 @@
+/*
+ * ----------------------------------------------------------------------------
+ * AI USAGE DECLARATION
+ * ----------------------------------------------------------------------------
+ *
+ * Components utilizing AI:
+ * - Common data structures (Message, ClientConfig).
+ * - Utility functions (allocate_message, time getters).
+ *
+ * Verification:
+ * The generated code was manually reviewed, compiled, and tested.
+ * ----------------------------------------------------------------------------
+ */
 /* MT25076 - Common Header for Network I/O Assignment */
 #ifndef MT25076_COMMON_H
 #define MT25076_COMMON_H
