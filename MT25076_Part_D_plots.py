@@ -8,200 +8,306 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Set style for better aesthetics
-try:
-    plt.style.use('seaborn-v0_8-whitegrid')
-except:
-    plt.style.use('seaborn-whitegrid')
-
-plt.rcParams['figure.figsize'] = (10, 6)
+plt.rcParams['figure.figsize'] = (12, 7)
 plt.rcParams['font.size'] = 12
 plt.rcParams['axes.labelsize'] = 14
 plt.rcParams['axes.titlesize'] = 16
 plt.rcParams['legend.fontsize'] = 11
 
-# System configuration
-SYSTEM_CONFIG = """
-System Configuration:
-- CPU: Intel Core (update with your CPU)
-- RAM: 16GB (update with your RAM)
-- OS: Linux (update with your kernel version)
-- Network: veth pair (10 Gbps virtual)
-"""
-
 # ============================================================================
-# HARDCODED DATA
+# HARDCODED DATA FROM CSV FILES
 # ============================================================================
 
-# Message sizes
 MESSAGE_SIZES = ['1K', '4K', '16K', '64K']
 MESSAGE_SIZES_BYTES = [1024, 4096, 16384, 65536]
-
-# Thread counts
 THREAD_COUNTS = [1, 2, 4, 8]
 
-# Throughput data (Gbps) - threads=4
-THROUGHPUT_TWO_COPY = [17.98579, 63.634746, 183.827554, 286.10815]
-THROUGHPUT_ONE_COPY = [16.644618, 57.282813, 171.330032, 280.350529]
-THROUGHPUT_ZERO_COPY = [9.879754, 36.329875, 112.589125, 191.339962]
+# ============================================================================
+# THROUGHPUT DATA (Gbps) - Averaged from S_to_C and C_to_S directions
+# Format: [1K, 4K, 16K, 64K] for each thread count
+# ============================================================================
 
-# Latency data (µs) - msg_size=16K
-LATENCY_TWO_COPY = [307.5, 198.5, 286.75, 314.69]
-LATENCY_ONE_COPY = [237.5, 161.5, 275.62, 196.06]
-LATENCY_ZERO_COPY = [239.0, 179.25, 208.62, 93.81]
+# Two-Copy Throughput
+THROUGHPUT_TWO_COPY = {
+    1: [4.615807, 16.232727, 46.174722, 75.652572],   # threads=1
+    2: [8.855352, 29.990700, 94.539990, 146.207362],  # threads=2
+    4: [17.521864, 57.860303, 174.731369, 276.608973], # threads=4
+    8: [28.292795, 90.963403, 251.375723, 425.910446]  # threads=8
+}
 
-# Cache misses (L1) - threads=4
-L1_MISSES_TWO_COPY = [630251181, 1156709117, 2893640691, 2641065458]
-L1_MISSES_ONE_COPY = [489251084, 906371590, 2641258126, 2790605541]
-L1_MISSES_ZERO_COPY = [488859392, 884021280, 2073444692, 2311763433]
+# One-Copy Throughput
+THROUGHPUT_ONE_COPY = {
+    1: [4.172880, 13.001204, 44.540369, 74.248405],
+    2: [8.349704, 25.409883, 83.164137, 142.941398],
+    4: [16.287560, 47.809165, 161.167867, 276.784096],
+    8: [24.270321, 75.473388, 232.874525, 402.620688]
+}
 
-# Cache misses (LLC) - threads=4
-LLC_MISSES_TWO_COPY = [33022, 18385, 5409, 7075]
-LLC_MISSES_ONE_COPY = [6614, 13377, 12826, 14503]
-LLC_MISSES_ZERO_COPY = [2329, 3217, 5464, 405248]
-
-# CPU cycles per byte - threads=4
-CYCLES_PER_BYTE_TWO_COPY = [10.5805, 3.2342, 1.057, 0.6133]
-CYCLES_PER_BYTE_ONE_COPY = [12.1811, 3.8543, 1.2327, 0.6546]
-CYCLES_PER_BYTE_ZERO_COPY = [15.2312, 4.7019, 1.6929, 0.9804]
+# Zero-Copy Throughput
+THROUGHPUT_ZERO_COPY = {
+    1: [2.248523, 8.553750, 27.380311, 53.251939],
+    2: [4.454806, 16.817311, 53.300906, 101.629063],
+    4: [8.675462, 32.499410, 101.887663, 191.585778],
+    8: [12.698369, 48.609677, 158.049715, 289.060675]
+}
 
 # ============================================================================
-# PLOT 1: Throughput vs Message Size
+# LATENCY DATA (µs) - Averaged from both directions
+# Format: [threads=1, threads=2, threads=4, threads=8] for each msg size
+# ============================================================================
+
+# Latency for 16K message size
+LATENCY_16K_TWO_COPY = [56.00, 64.625, 112.625, 78.375]
+LATENCY_16K_ONE_COPY = [155.50, 59.25, 76.31, 164.25]
+LATENCY_16K_ZERO_COPY = [77.00, 73.875, 63.44, 272.56]
+
+# Latency for different msg sizes (threads=4)
+LATENCY_4THREADS_TWO_COPY = [63.815, 62.25, 112.625, 164.185]
+LATENCY_4THREADS_ONE_COPY = [83.88, 92.50, 76.31, 174.25]
+LATENCY_4THREADS_ZERO_COPY = [125.37, 145.625, 63.44, 139.31]
+
+# ============================================================================
+# CACHE MISSES DATA (from perf - server_sender S->C direction)
+# Format: [1K, 4K, 16K, 64K]
+# ============================================================================
+
+# L1 Cache Misses (threads=4)
+L1_MISSES_TWO_COPY_4T = [268870315, 451680979, 1758628802, 2371369969]
+L1_MISSES_ONE_COPY_4T = [276123745, 411803975, 1683582636, 2342346615]
+L1_MISSES_ZERO_COPY_4T = [267479753, 282096206, 1108023088, 1819643628]
+
+# Cache misses (cache-misses counter) for threads=4
+CACHE_MISSES_TWO_COPY = {
+    1: [62106, 106494, 117877, 127023],
+    2: [3340878, 10338746, 11993654, 44583047],
+    4: [56584051, 2963075, 18858864, 2968711],
+    8: [3496979, 30437211, 16182762, 4427568]
+}
+
+CACHE_MISSES_ONE_COPY = {
+    1: [79091, 5259144, 141860, 75557],
+    2: [157541, 107861, 15280041, 77249213],
+    4: [96489, 14383645, 24748060, 49175101],
+    8: [985950, 3295832, 7488676, 17753189]
+}
+
+CACHE_MISSES_ZERO_COPY = {
+    1: [4463918, 137575, 39379, 73638],
+    2: [10799626, 11721832, 11739668, 6279356],
+    4: [3794792, 26110613, 1772530, 4291612],
+    8: [2079335, 773766, 1248310, 3887099]
+}
+
+# ============================================================================
+# CPU CYCLES PER BYTE (from perf - averaged across directions)
+# Format: [1K, 4K, 16K, 64K]
+# ============================================================================
+
+CYCLES_PER_BYTE_TWO_COPY = {
+    1: [7.37, 2.11, 0.74, 0.60],
+    2: [9.85, 3.58, 1.13, 0.80],
+    4: [10.31, 3.14, 1.19, 0.79],
+    8: [15.42, 4.87, 1.78, 1.06]
+}
+
+CYCLES_PER_BYTE_ONE_COPY = {
+    1: [7.89, 3.76, 0.76, 0.46],
+    2: [9.34, 2.65, 1.40, 0.73],
+    4: [8.03, 3.56, 1.35, 0.75],
+    8: [16.90, 5.93, 1.91, 1.11]
+}
+
+CYCLES_PER_BYTE_ZERO_COPY = {
+    1: [24.96, 3.95, 1.24, 0.63],
+    2: [25.99, 5.47, 1.99, 1.11],
+    4: [26.44, 6.70, 2.26, 1.16],
+    8: [35.23, 9.19, 2.84, 1.35]
+}
+
+# ============================================================================
+# PLOT 1: Throughput vs Message Size (for each thread count)
 # ============================================================================
 def plot_throughput_vs_message_size():
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
     
-    x = np.arange(len(MESSAGE_SIZES))
-    width = 0.25
+    colors = {'two_copy': '#e74c3c', 'one_copy': '#3498db', 'zero_copy': '#2ecc71'}
     
-    bars1 = ax.bar(x - width, THROUGHPUT_TWO_COPY, width, label='Two-Copy', 
-                   color='#e74c3c', edgecolor='black', linewidth=0.5)
-    bars2 = ax.bar(x, THROUGHPUT_ONE_COPY, width, label='One-Copy', 
-                   color='#3498db', edgecolor='black', linewidth=0.5)
-    bars3 = ax.bar(x + width, THROUGHPUT_ZERO_COPY, width, label='Zero-Copy', 
-                   color='#2ecc71', edgecolor='black', linewidth=0.5)
+    for idx, threads in enumerate(THREAD_COUNTS):
+        ax = axes[idx]
+        x = np.arange(len(MESSAGE_SIZES))
+        width = 0.25
+        
+        bars1 = ax.bar(x - width, THROUGHPUT_TWO_COPY[threads], width, 
+                       label='Two-Copy', color=colors['two_copy'], edgecolor='black', linewidth=0.5)
+        bars2 = ax.bar(x, THROUGHPUT_ONE_COPY[threads], width, 
+                       label='One-Copy', color=colors['one_copy'], edgecolor='black', linewidth=0.5)
+        bars3 = ax.bar(x + width, THROUGHPUT_ZERO_COPY[threads], width, 
+                       label='Zero-Copy', color=colors['zero_copy'], edgecolor='black', linewidth=0.5)
+        
+        ax.set_xlabel('Message Size')
+        ax.set_ylabel('Throughput (Gbps)')
+        ax.set_title(f'{threads} Thread(s)')
+        ax.set_xticks(x)
+        ax.set_xticklabels(MESSAGE_SIZES)
+        ax.legend(loc='upper left', fontsize=9)
+        ax.grid(axis='y', alpha=0.3)
     
-    ax.set_xlabel('Message Size')
-    ax.set_ylabel('Throughput (Gbps)')
-    ax.set_title('Throughput vs Message Size\n(4 threads)')
-    ax.set_xticks(x)
-    ax.set_xticklabels(MESSAGE_SIZES)
-    ax.legend(loc='upper left')
-    
-    # Add value labels
-    for bars in [bars1, bars2, bars3]:
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:.1f}',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3),
-                        textcoords="offset points",
-                        ha='center', va='bottom', fontsize=9)
-    
+    fig.suptitle(f'Throughput vs Message Size\n', fontsize=14, y=1.02)
     plt.tight_layout()
     plt.savefig('MT25076_Part_D_throughput_vs_msgsize.png', dpi=150, bbox_inches='tight')
     plt.close()
+    print("Generated: MT25076_Part_D_throughput_vs_msgsize.png")
 
 # ============================================================================
-# PLOT 2: Latency vs Thread Count
+# PLOT 2: Latency vs Thread Count (for each message size)
 # ============================================================================
 def plot_latency_vs_threads():
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
     
-    ax.plot(THREAD_COUNTS, LATENCY_TWO_COPY, 'o-', label='Two-Copy', 
-            color='#e74c3c', linewidth=2, markersize=8)
-    ax.plot(THREAD_COUNTS, LATENCY_ONE_COPY, 's-', label='One-Copy', 
-            color='#3498db', linewidth=2, markersize=8)
-    ax.plot(THREAD_COUNTS, LATENCY_ZERO_COPY, '^-', label='Zero-Copy', 
-            color='#2ecc71', linewidth=2, markersize=8)
+    # Latency data organized by message size
+    # [threads=1, threads=2, threads=4, threads=8]
+    latency_data = {
+        '1K': {
+            'two_copy': [120.50, 95.875, 63.815, 6609.06],
+            'one_copy': [51.25, 115.00, 83.88, 6513.59],
+            'zero_copy': [87.75, 52.125, 125.37, 59.875]
+        },
+        '4K': {
+            'two_copy': [49.25, 99.75, 62.25, 39.75],
+            'one_copy': [130.50, 103.00, 92.50, 68.50],
+            'zero_copy': [112.50, 115.00, 145.625, 30.155]
+        },
+        '16K': {
+            'two_copy': [56.00, 64.625, 112.625, 78.375],
+            'one_copy': [155.50, 59.25, 76.31, 164.25],
+            'zero_copy': [77.00, 73.875, 63.44, 272.56]
+        },
+        '64K': {
+            'two_copy': [278.75, 80.125, 164.185, 110.565],
+            'one_copy': [166.25, 206.875, 174.25, 198.875],
+            'zero_copy': [262.00, 112.375, 139.31, 96.065]
+        }
+    }
     
-    ax.set_xlabel('Number of Threads')
-    ax.set_ylabel('Latency (µs)')
-    ax.set_title('Latency vs Thread Count\n(16K message size)')
-    ax.set_xticks(THREAD_COUNTS)
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.3)
+    colors = {'two_copy': '#e74c3c', 'one_copy': '#3498db', 'zero_copy': '#2ecc71'}
+    markers = {'two_copy': 'o', 'one_copy': 's', 'zero_copy': '^'}
     
+    for idx, msg_size in enumerate(MESSAGE_SIZES):
+        ax = axes[idx]
+        data = latency_data[msg_size]
+        
+        for impl, values in data.items():
+            # Cap extreme values for visualization
+            capped_values = [min(v, 500) for v in values]
+            label = impl.replace('_', '-').title()
+            ax.plot(THREAD_COUNTS, capped_values, f'{markers[impl]}-', 
+                   label=label, color=colors[impl], linewidth=2, markersize=8)
+        
+        ax.set_xlabel('Number of Threads')
+        ax.set_ylabel('Latency (µs)')
+        ax.set_title(f'Message Size: {msg_size}')
+        ax.set_xticks(THREAD_COUNTS)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    fig.suptitle(f'Latency vs Thread Count\n', fontsize=14, y=1.02)
     plt.tight_layout()
     plt.savefig('MT25076_Part_D_latency_vs_threads.png', dpi=150, bbox_inches='tight')
     plt.close()
+    print("Generated: MT25076_Part_D_latency_vs_threads.png")
 
 # ============================================================================
-# PLOT 3: Cache Misses vs Message Size
+# PLOT 3: Cache Misses vs Message Size (for each thread count)
 # ============================================================================
 def plot_cache_misses():
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
     
-    x = np.arange(len(MESSAGE_SIZES))
-    width = 0.25
+    colors = {'two_copy': '#e74c3c', 'one_copy': '#3498db', 'zero_copy': '#2ecc71'}
     
-    # L1 Cache Misses
-    ax1.bar(x - width, np.array(L1_MISSES_TWO_COPY), width, label='Two-Copy', 
-            color='#e74c3c', edgecolor='black', linewidth=0.5)
-    ax1.bar(x, np.array(L1_MISSES_ONE_COPY), width, label='One-Copy', 
-            color='#3498db', edgecolor='black', linewidth=0.5)
-    ax1.bar(x + width, np.array(L1_MISSES_ZERO_COPY), width, label='Zero-Copy', 
-            color='#2ecc71', edgecolor='black', linewidth=0.5)
+    for idx, threads in enumerate(THREAD_COUNTS):
+        ax = axes[idx]
+        x = np.arange(len(MESSAGE_SIZES))
+        width = 0.25
+        
+        ax.bar(x - width, CACHE_MISSES_TWO_COPY[threads], width, 
+               label='Two-Copy', color=colors['two_copy'], edgecolor='black', linewidth=0.5)
+        ax.bar(x, CACHE_MISSES_ONE_COPY[threads], width, 
+               label='One-Copy', color=colors['one_copy'], edgecolor='black', linewidth=0.5)
+        ax.bar(x + width, CACHE_MISSES_ZERO_COPY[threads], width, 
+               label='Zero-Copy', color=colors['zero_copy'], edgecolor='black', linewidth=0.5)
+        
+        ax.set_xlabel('Message Size')
+        ax.set_ylabel('Cache Misses')
+        ax.set_title(f'{threads} Thread(s)')
+        ax.set_xticks(x)
+        ax.set_xticklabels(MESSAGE_SIZES)
+        ax.legend(loc='upper left', fontsize=9)
+        ax.set_yscale('log')
+        ax.grid(axis='y', alpha=0.3)
     
-    ax1.set_xlabel('Message Size')
-    ax1.set_ylabel('L1 Cache Misses')
-    ax1.set_title('L1 Data Cache Misses vs Message Size')
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(MESSAGE_SIZES)
-    ax1.legend(loc='upper left')
-    ax1.set_yscale('log')
-    
-    # LLC Cache Misses
-    ax2.bar(x - width, np.array(LLC_MISSES_TWO_COPY), width, label='Two-Copy', 
-            color='#e74c3c', edgecolor='black', linewidth=0.5)
-    ax2.bar(x, np.array(LLC_MISSES_ONE_COPY), width, label='One-Copy', 
-            color='#3498db', edgecolor='black', linewidth=0.5)
-    ax2.bar(x + width, np.array(LLC_MISSES_ZERO_COPY), width, label='Zero-Copy', 
-            color='#2ecc71', edgecolor='black', linewidth=0.5)
-    
-    ax2.set_xlabel('Message Size')
-    ax2.set_ylabel('LLC Misses')
-    ax2.set_title('Last Level Cache Misses vs Message Size')
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(MESSAGE_SIZES)
-    ax2.legend(loc='upper left')
-    ax2.set_yscale('log')
-    
-    plt.suptitle('Cache Misses vs Message Size (4 threads)', fontsize=14, y=1.02)
+    fig.suptitle(f'Cache Misses vs Message Size\n', fontsize=14, y=1.02)
     plt.tight_layout()
     plt.savefig('MT25076_Part_D_cache_misses.png', dpi=150, bbox_inches='tight')
     plt.close()
+    print("Generated: MT25076_Part_D_cache_misses.png")
 
 # ============================================================================
-# PLOT 4: CPU Cycles per Byte Transferred
+# PLOT 4: CPU Cycles per Byte Transferred (for each thread count)
 # ============================================================================
 def plot_cycles_per_byte():
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
     
-    ax.plot(MESSAGE_SIZES, CYCLES_PER_BYTE_TWO_COPY, 'o-', label='Two-Copy', 
-            color='#e74c3c', linewidth=2, markersize=8)
-    ax.plot(MESSAGE_SIZES, CYCLES_PER_BYTE_ONE_COPY, 's-', label='One-Copy', 
-            color='#3498db', linewidth=2, markersize=8)
-    ax.plot(MESSAGE_SIZES, CYCLES_PER_BYTE_ZERO_COPY, '^-', label='Zero-Copy', 
-            color='#2ecc71', linewidth=2, markersize=8)
+    colors = {'two_copy': '#e74c3c', 'one_copy': '#3498db', 'zero_copy': '#2ecc71'}
+    markers = {'two_copy': 'o', 'one_copy': 's', 'zero_copy': '^'}
     
-    ax.set_xlabel('Message Size')
-    ax.set_ylabel('CPU Cycles per Byte')
-    ax.set_title('CPU Cycles per Byte Transferred vs Message Size\n(4 threads)')
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.3)
+    for idx, threads in enumerate(THREAD_COUNTS):
+        ax = axes[idx]
+        
+        ax.plot(MESSAGE_SIZES, CYCLES_PER_BYTE_TWO_COPY[threads], 'o-', 
+               label='Two-Copy', color=colors['two_copy'], linewidth=2, markersize=8)
+        ax.plot(MESSAGE_SIZES, CYCLES_PER_BYTE_ONE_COPY[threads], 's-', 
+               label='One-Copy', color=colors['one_copy'], linewidth=2, markersize=8)
+        ax.plot(MESSAGE_SIZES, CYCLES_PER_BYTE_ZERO_COPY[threads], '^-', 
+               label='Zero-Copy', color=colors['zero_copy'], linewidth=2, markersize=8)
+        
+        ax.set_xlabel('Message Size')
+        ax.set_ylabel('CPU Cycles per Byte')
+        ax.set_title(f'{threads} Thread(s)')
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+        
+        # Annotate values
+        for i, msg in enumerate(MESSAGE_SIZES):
+            ax.annotate(f'{CYCLES_PER_BYTE_TWO_COPY[threads][i]:.1f}', 
+                       (msg, CYCLES_PER_BYTE_TWO_COPY[threads][i]),
+                       textcoords="offset points", xytext=(0, 8), ha='center', fontsize=8)
     
-    # Add annotations for max/min
-    for i in [0, len(MESSAGE_SIZES)-1]:
-        ax.annotate(f'{CYCLES_PER_BYTE_TWO_COPY[i]:.1f}', 
-                   (MESSAGE_SIZES[i], CYCLES_PER_BYTE_TWO_COPY[i]), 
-                   textcoords="offset points", xytext=(10,0), ha='left', fontsize=9)
-    
+    fig.suptitle(f'CPU Cycles per Byte Transferred\n', fontsize=14, y=1.02)
     plt.tight_layout()
     plt.savefig('MT25076_Part_D_cycles_per_byte.png', dpi=150, bbox_inches='tight')
     plt.close()
+    print("Generated: MT25076_Part_D_cycles_per_byte.png")
 
+# ============================================================================
+# Main
+# ============================================================================
 if __name__ == "__main__":
+    print("Generating plots for Network I/O Performance Analysis...")
+    print("=" * 60)
+    
     plot_throughput_vs_message_size()
     plot_latency_vs_threads()
     plot_cache_misses()
     plot_cycles_per_byte()
+    
+    print("=" * 60)
+    print("All plots generated successfully!")
+    print("\nGenerated files:")
+    print("  - MT25076_Part_D_throughput_vs_msgsize.png")
+    print("  - MT25076_Part_D_latency_vs_threads.png")
+    print("  - MT25076_Part_D_cache_misses.png")
+    print("  - MT25076_Part_D_cycles_per_byte.png")

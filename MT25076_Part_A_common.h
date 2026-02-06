@@ -37,6 +37,7 @@ typedef struct {
     int port;
     size_t message_size;
     int duration;
+    int is_sender;  /* 1 = Sender, 0 = Receiver */
     /* Results */
     double throughput_gbps;
     double latency_us;
@@ -49,7 +50,13 @@ typedef struct {
     int client_fd;
     int thread_id;
     size_t message_size;
+    int is_sender;  /* 1 = Sender, 0 = Receiver */
 } ServerThreadArgs;
+
+#ifndef MSG_ZEROCOPY
+#define MSG_ZEROCOPY 0x4000000
+#endif
+
 
 /* Utility functions */
 static inline double get_time_us(void) {
@@ -97,6 +104,8 @@ static inline void free_message(Message *msg) {
 }
 
 /* Serialize message into a contiguous buffer */
+// serialize_message() is used ONLY in Part A1 (two-copy baseline)
+// A2/A3 intentionally do not use this function
 static inline char* serialize_message(Message *msg, size_t *out_size) {
     size_t total = 0;
     for (int i = 0; i < NUM_FIELDS; i++) {

@@ -42,10 +42,33 @@ void* client_thread(void *arg) {
     printf("[Client] Thread %d: Connected to %s:%d\n", 
            config->thread_id, config->server_ip, config->port);
     
-    /* Receive buffer */
-    char *recv_buf = (char*)malloc(config->message_size);
-    if (!recv_buf) {
+    /* Allocate buffer */
+    char *buf = NULL;
+    Message *msg = NULL;
+    size_t buf_size = 0;
+    
+    if (config->is_sender) {
+        /* Sender: Allocate and fill message */
+        msg = allocate_message(config->message_size);
+        if (!msg) {
+             close(sock_fd);
+             return NULL;
+        }
+        buf = serialize_message(msg, &buf_size);
+        if (!buf) {
+            free_message(msg);
+            close(sock_fd);
+            return NULL;
+        }
+    } else {
+        /* Receiver: Allocate receive buffer */
+        buf = (char*)malloc(config->message_size);
+        buf_size = config->message_size;
+    }
+    
+    if (!buf) {
         fprintf(stderr, "[Client] Thread %d: Failed to allocate buffer\n", config->thread_id);
+        if (msg) free_message(msg);
         close(sock_fd);
         return NULL;
     }
@@ -58,14 +81,23 @@ void* client_thread(void *arg) {
     config->bytes_sent = 0;
     config->messages_sent = 0;
     
-    /* Receive data continuously for fixed duration */
+    /* Loop for fixed duration */
     while (client_running && get_time_sec() < end_time) {
         double msg_start = get_time_us();
+        ssize_t ret;
         
-        /* Two-copy: kernel buffer -> user buffer (copy 1 on receive) */
-        ssize_t received = recv(sock_fd, recv_buf, config->message_size, 0);
-        if (received <= 0) {
-            if (received < 0) perror("[Client] recv");
+        if (config->is_sender) {
+            /* Two-copy Send: User -> Kernel */
+            ret = send(sock_fd, buf, buf_size, 0);
+        } else {
+            /* Two-copy Receive: Kernel -> User */
+            ret = recv(sock_fd, buf, buf_size, MSG_WAITALL); // Use MSG_WAITALL to ensure full read if possible
+        }
+        
+        if (ret <= 0) {
+            if (ret < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+               // perror("[Client] IO error");
+            }
             break;
         }
         
@@ -76,7 +108,10 @@ void* client_thread(void *arg) {
         }
         last_msg_time = msg_end - msg_start;
         
-        config->bytes_sent += received;
+        config->bytes_sent += ret;
+        // Count 1 message per full size or just count iterations? 
+        // For simplicity, we increment message count. 
+        // Note: recv might be partial in real world but MSG_WAITALL helps.
         config->messages_sent++;
     }
     
@@ -85,15 +120,21 @@ void* client_thread(void *arg) {
     /* Calculate throughput (Gbps) */
     config->throughput_gbps = (config->bytes_sent * 8.0) / (actual_duration * 1e9);
     
-    /* Calculate average latency (using first and last message times as samples) */
+    /* Calculate average latency */
     config->latency_us = (first_msg_time + last_msg_time) / 2.0;
     
-    printf("[Client] Thread %d: Received %llu bytes (%llu msgs) in %.2f sec, "
+    printf("[Client] Thread %d (%s): Transferred %llu bytes (%llu msgs) in %.2f sec, "
            "Throughput: %.3f Gbps, Latency: %.2f us\n",
-           config->thread_id, config->bytes_sent, config->messages_sent,
+           config->thread_id, config->is_sender ? "Sender" : "Receiver",
+           config->bytes_sent, config->messages_sent,
            actual_duration, config->throughput_gbps, config->latency_us);
     
-    free(recv_buf);
+    if (config->is_sender) {
+        free(buf);
+        free_message(msg);
+    } else {
+        free(buf);
+    }
     close(sock_fd);
     return NULL;
 }
@@ -104,7 +145,10 @@ int main(int argc, char *argv[]) {
     size_t message_size = 1024;
     int num_threads = 1;
     int duration = DEFAULT_DURATION;
-    
+    int is_sender = 0; /* Default: Client is receiver (matches original A1 behavior implied by "Receive buffer") 
+                          BUT user wants bidirectional. We'll default to receiver if not specified, 
+                          but script will specify. */
+
     /* Parse arguments */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
@@ -117,13 +161,11 @@ int main(int argc, char *argv[]) {
             num_threads = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
             duration = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+            if (strcmp(argv[++i], "sender") == 0) is_sender = 1;
+            else is_sender = 0;
         } else if (strcmp(argv[i], "-h") == 0) {
-            printf("Usage: %s [-i ip] [-p port] [-s size] [-t threads] [-d duration]\n", argv[0]);
-            printf("  -i ip        Server IP (default: 127.0.0.1)\n");
-            printf("  -p port      Port number (default: %d)\n", DEFAULT_PORT);
-            printf("  -s size      Message size, e.g., 1K, 4K, 1M (default: 1K)\n");
-            printf("  -t threads   Number of client threads (default: 1)\n");
-            printf("  -d duration  Test duration in seconds (default: %d)\n", DEFAULT_DURATION);
+            printf("Usage: %s [-i ip] [-p port] [-s size] [-t threads] [-d duration] [-m sender|receiver]\n", argv[0]);
             return 0;
         }
     }
@@ -132,8 +174,8 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, handle_signal);
     
     printf("[Client A1 - Two-Copy] Connecting to %s:%d\n", server_ip, port);
-    printf("[Client A1] Message size: %zu bytes, Threads: %d, Duration: %d sec\n",
-           message_size, num_threads, duration);
+    printf("[Client A1] Mode: %s, Message size: %zu bytes, Threads: %d, Duration: %d sec\n",
+           is_sender ? "SENDER" : "RECEIVER", message_size, num_threads, duration);
     
     /* Allocate thread configs */
     pthread_t *threads = (pthread_t*)malloc(num_threads * sizeof(pthread_t));
@@ -146,6 +188,7 @@ int main(int argc, char *argv[]) {
         configs[i].port = port;
         configs[i].message_size = message_size;
         configs[i].duration = duration;
+        configs[i].is_sender = is_sender;
         configs[i].bytes_sent = 0;
         configs[i].messages_sent = 0;
         

@@ -23,48 +23,68 @@ void* handle_client(void *arg) {
     printf("[Server] Thread %d: Handling client, message size: %zu bytes\n", 
            args->thread_id, message_size);
     
-    /* Create message with 8 heap-allocated fields */
-    Message *msg = allocate_message(message_size);
-    if (!msg) {
-        fprintf(stderr, "[Server] Thread %d: Failed to allocate message\n", args->thread_id);
-        close(client_fd);
-        free(args);
-        return NULL;
-    }
+    /* Prepare based on mode: If server is Sender, allocate message. If specific receiver, allocate buffer. */
+    char *buf = NULL;
+    Message *msg = NULL;
+    size_t buf_size = 0;
     
-    /* Serialize message for sending */
-    size_t buf_size;
-    char *send_buf = serialize_message(msg, &buf_size);
-    if (!send_buf) {
-        fprintf(stderr, "[Server] Thread %d: Failed to serialize message\n", args->thread_id);
-        free_message(msg);
-        close(client_fd);
-        free(args);
-        return NULL;
+    if (args->is_sender) {
+        msg = allocate_message(message_size);
+        if (!msg) {
+            fprintf(stderr, "[Server] failed to allocate msg\n");
+            close(client_fd);
+            free(args);
+            return NULL;
+        }
+        buf = serialize_message(msg, &buf_size);
+        if (!buf) {
+            free_message(msg);
+            close(client_fd);
+            free(args);
+            return NULL;
+        }
+    } else {
+        /* Receiver mode: Alloc receive buffer */
+        buf = (char*)malloc(message_size);
+        buf_size = message_size;
+        if (!buf) {
+            close(client_fd);
+            free(args);
+            return NULL;
+        }
     }
     
     unsigned long long total_bytes = 0;
     unsigned long long total_messages = 0;
     
-    /* Send messages continuously until client disconnects */
+    /* Loop until disconnect or error */
     while (server_running) {
-        /* Two-copy: User buffer -> kernel buffer (copy 1) */
-        ssize_t sent = send(client_fd, send_buf, buf_size, 0);
-        if (sent <= 0) {
-            if (sent < 0 && errno != EPIPE && errno != ECONNRESET) {
-                perror("[Server] send");
+        ssize_t ret;
+        if (args->is_sender) {
+             ret = send(client_fd, buf, buf_size, 0);
+        } else {
+             ret = recv(client_fd, buf, buf_size, MSG_WAITALL);
+        }
+        
+        if (ret <= 0) {
+            if (ret < 0 && errno != EPIPE && errno != ECONNRESET) {
+               // perror("[Server] IO Error");
             }
             break;
         }
-        total_bytes += sent;
+        total_bytes += ret;
         total_messages++;
     }
     
-    printf("[Server] Thread %d: Sent %llu bytes (%llu messages)\n", 
-           args->thread_id, total_bytes, total_messages);
+    printf("[Server] Thread %d (%s): Transferred %llu bytes (%llu messages)\n", 
+           args->thread_id, args->is_sender ? "Sender" : "Receiver", total_bytes, total_messages);
     
-    free(send_buf);
-    free_message(msg);
+    if (args->is_sender) {
+        free(buf);
+        free_message(msg);
+    } else {
+        free(buf);
+    }
     close(client_fd);
     free(args);
     return NULL;
@@ -73,6 +93,7 @@ void* handle_client(void *arg) {
 int main(int argc, char *argv[]) {
     int port = DEFAULT_PORT;
     size_t message_size = 1024;  /* Default 1KB */
+    int is_sender = 1; /* Default: Server is sender */
     
     /* Parse arguments */
     for (int i = 1; i < argc; i++) {
@@ -80,10 +101,11 @@ int main(int argc, char *argv[]) {
             port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             message_size = parse_size(argv[++i]);
+        } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
+             if (strcmp(argv[++i], "sender") == 0) is_sender = 1;
+             else is_sender = 0;
         } else if (strcmp(argv[i], "-h") == 0) {
-            printf("Usage: %s [-p port] [-s message_size]\n", argv[0]);
-            printf("  -p port          Port number (default: %d)\n", DEFAULT_PORT);
-            printf("  -s message_size  Message size, e.g., 1K, 4K, 1M (default: 1K)\n");
+            printf("Usage: %s [-p port] [-s message_size] [-m sender|receiver]\n", argv[0]);
             return 0;
         }
     }
@@ -118,9 +140,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    printf("[Server A1 - Two-Copy] Listening on port %d, message size: %zu bytes\n", 
-           port, message_size);
-    printf("[Server A1] Two copies: (1) send() user->kernel, (2) kernel->NIC DMA\n");
+    printf("[Server A1 - Two-Copy] Listening on port %d, message size: %zu bytes, Mode: %s\n", 
+           port, message_size, is_sender ? "SENDER" : "RECEIVER");
     
     int thread_id = 0;
     while (server_running) {
@@ -136,14 +157,14 @@ int main(int argc, char *argv[]) {
         
         set_socket_options(client_fd);
         
-        printf("[Server] Accepted connection from %s:%d\n",
-               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        // printf("[Server] Accepted connection\n");
         
         /* Create thread to handle client */
         ServerThreadArgs *args = (ServerThreadArgs*)malloc(sizeof(ServerThreadArgs));
         args->client_fd = client_fd;
         args->thread_id = thread_id++;
         args->message_size = message_size;
+        args->is_sender = is_sender;
         
         pthread_t tid;
         if (pthread_create(&tid, NULL, handle_client, args) != 0) {
