@@ -166,36 +166,19 @@ make clean
 make
 ```
 
+### Executable
+```
+sudo chmod +x MT25076_Part_C_run_experiments.sh
+```
+
 ### Run Experiments
 ```
-sudo bash MT25076_Part_C_run_experiments.sh
+sudo ./MT25076_Part_C_run_experiments.sh
 ```
 
 ### Generate Plots
 ```
 python3 MT25076_Part_D_plots.py
 ```
-
----
-
-## 9. System Configuration
-
-- Operating System: Linux (Ubuntu 22.04)  
-- Architecture: x86_64  
-- Network Setup: Network namespaces using veth pairs  
-- CPU and RAM details are documented in the report  
-
----
-
-## 10. AI Usage Declaration
-
-AI tools (ChatGPT) were used in a limited and transparent manner for:
-- Conceptual clarification of two-copy, one-copy, and zero-copy mechanisms  
-- Guidance on `sendmsg()` and `MSG_ZEROCOPY` usage  
-- Assistance in interpreting `perf` counters  
-
-All coding, experimentation, analysis, and report writing were performed manually.
-
----
 
 **End of README**
