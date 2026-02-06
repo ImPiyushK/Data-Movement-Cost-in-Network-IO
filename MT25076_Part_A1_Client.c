@@ -1,3 +1,17 @@
+/*
+ * ----------------------------------------------------------------------------
+ * AI USAGE DECLARATION
+ * ----------------------------------------------------------------------------
+ *
+ * Components utilizing AI:
+ * - Implementation of Two-Copy Client logic using send/recv.
+ * - Thread management and throughput calculation.
+ *
+ *
+ * Verification:
+ * The generated code was manually reviewed, compiled, and tested.
+ * ----------------------------------------------------------------------------
+ */
 /* MT25076 - Part A1: Two-Copy Client Implementation
  * Uses send()/recv() socket primitives - baseline two-copy mechanism
  * Parameterized message size and thread count at runtime

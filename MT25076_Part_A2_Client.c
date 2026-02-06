@@ -1,3 +1,16 @@
+/*
+ * ----------------------------------------------------------------------------
+ * AI USAGE DECLARATION
+ * ----------------------------------------------------------------------------
+ *
+ * Components utilizing AI:
+ * - Implementation of One-Copy Client logic using sendmsg/iovec.
+ * - Scatter-gather I/O setup.
+ *
+ * Verification:
+ * The generated code was manually reviewed, compiled, and tested.
+ * ----------------------------------------------------------------------------
+ */
 /* MT25076 - Part A2: One-Copy Client Implementation
  * Uses recvmsg() with iovec for scatter-gather I/O
  */

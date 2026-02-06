@@ -1,3 +1,16 @@
+/*
+ * ----------------------------------------------------------------------------
+ * AI USAGE DECLARATION
+ * ----------------------------------------------------------------------------
+ *
+ * Components utilizing AI:
+ * - Implementation of Zero-Copy Client using MSG_ZEROCOPY.
+ * - Error queue polling logic (`poll_zerocopy_completion`).
+ *
+ * Verification:
+ * The generated code was manually reviewed, compiled, and tested.
+ * ----------------------------------------------------------------------------
+ */
 /* MT25076 - Part A3: Zero-Copy Client Implementation
  * Connects to zero-copy server and receives data
  */
