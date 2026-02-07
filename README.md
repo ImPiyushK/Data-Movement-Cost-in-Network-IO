@@ -113,11 +113,6 @@ All micro-architectural measurements are performed on the **server side**.
 - The irregular patterns are likely attributable to measurement noise from short experiment durations, non-deterministic kernel scheduling, and the interplay between data copy cache pollution and metadata-driven cache activity in zero-copy.
 - A general trend emerges at larger message sizes and higher thread counts: zero-copy tends to show fewer cache misses, consistent with eliminating bulk memory copies that pollute the LLC.
 
-### Key Takeaways
-- On this testbed (veth pair, no real NIC), **two-copy with optimized `memcpy()` outperforms** one-copy and zero-copy in throughput.
-- Zero-copy's benefits are **not realized** without real hardware DMA; its kernel-level overheads dominate on virtual interfaces.
-- Latency and cache behavior are complex, non-linear, and heavily influenced by thread scheduling, kernel batching, and CPU microarchitecture.
-
 ---
 
 ## Conclusion
